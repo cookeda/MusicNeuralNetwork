@@ -35,11 +35,16 @@ def loudness(file_name):
     model_checkpoint = setup_model_checkpoints(output_path)
     early_stopping = EarlyStopping(monitor='val_loss', patience=10, verbose=1)
 
+    norm_layer = Normalization(axis=1)
+    norm_layer.adapt(x_valid)
+
     # create linear model
     model = Sequential([
         Input(129),
+        norm_layer,
+        Dense(512, activation='tanh'),
         Dense(256, activation='tanh'),
-        Dense(128, activation='tanh'),
+        Dense(128, activation='relu'),
         Dense(64, activation='relu'),
         Dense(32, activation='relu'),
         Dense(16, activation='relu'),
@@ -85,9 +90,16 @@ def chroma(file_name):
     model = Sequential([
         Input(129),
         norm_layer,
-        Dense(75, activation='tanh'),
+        # Dense(1048, activation='tanh'), did not improve
+        Dense(512, activation='tanh'),
+        Dense(256, activation='tanh'),
+        Dense(128, activation='relu'),
+        Dense(64, activation='relu'),
+        Dense(32, activation='relu'),
+        Dense(16, activation='relu'),
+        Dense(8, activation='relu'),
 
-        Dense(1, activation='sigmoid')
+        Dense(1, activation='linear')
     ])
 
     model.compile(loss='mse', optimizer='adam')
