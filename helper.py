@@ -201,7 +201,11 @@ def loudness_example():
     # create linear model
     model = Sequential([
         Input(129),
-        Dense(1, activation='linear')
+        Dense(1024, activation='tanh'),
+        Dense(256, activation='swish'),
+        Dense(64, activation='swish'),
+        Dense(1, activation='linear'),
+
     ])
 
     model.compile(loss='mse', optimizer='adam')
