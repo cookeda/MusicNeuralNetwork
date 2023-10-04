@@ -1,0 +1,5 @@
+*.npz
+__pycache__/
+output/
+submissions/
+submission.zip
