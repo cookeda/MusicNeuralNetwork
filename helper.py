@@ -2,13 +2,15 @@ import os
 import numpy as np
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.models import Sequential, load_model
-from keras.layers import Dense, Input
+from keras.layers import Dense, Input, Normalization, Dropout
 from keras.backend import clear_session
 import matplotlib.pyplot as plt
 from keras.losses import mean_squared_error, kullback_leibler_divergence
 import tensorflow as tf
 import warnings
 import matplotlib as mpl
+from keras.regularizers import l2
+
 mpl.use('TkAgg')
 
 
@@ -50,7 +52,7 @@ def setup_model_checkpoints(output_path):
     return model_checkpoint
 
 
-def visualize(model, endpoint='loudness', subset='valid', output_path=''):
+def visualize(model, endpoint='mfcc', subset='valid', output_path=''):
     """
     Create a joint distribution plot that shows relationship between
     model estimates and true values.
@@ -161,6 +163,64 @@ def get_best_model(output_path):
         output_path, best_model_file), compile=True)
     return model, best_epoch, min_loss
 
+def print_error(y_true, y_pred, num_params, name):
+    """
+     Print performance for this model.
+
+     :param y_true: The correct elevations (in meters)
+     :param y_pred: The estimated elevations by the model (in meters)
+     :param num_params: The number of trainable parameters in the model
+     :param name: The name of the model
+     :return: None
+     """
+
+    # the error
+    e = y_pred - y_true
+    # the mean squared error
+    mse = np.mean(e ** 2)
+    # the lower bound for the number of bits to encode the errors per pixel
+    num_pixels = len(e)
+    error_bpp = error_bits(e) / num_pixels
+    # the number of bits to encode the model per pixel
+    desc_bpp = 32 * num_params / num_pixels
+    # the total bits for the compressed image per pixel
+    total_bpp = desc_bpp + error_bpp
+    # comparison to a model that estimated mean(y) for every pixel
+    error_bpp_0 = error_bits(y_true - y_true.mean()) / num_pixels
+    desc_bpp_0 = 32 / num_pixels
+    total_bpp_0 = error_bpp_0 + desc_bpp_0
+    # percent improvement
+    improvement = 1 - total_bpp / total_bpp_0
+    msg = (
+        f'{name + ":":12s} {mse:>11.4f} MSE, {error_bpp:>11.4f} error bits/px, {desc_bpp:>11.4f} model bits/px'
+        f'{total_bpp:11.4f} total bits/px, {improvement:.2%} improvement'
+    )
+    print(msg)
+    return mse, error_bpp, desc_bpp, error_bpp_0, desc_bpp_0, improvement, msg
+
+
+def error_bits(error):
+    """
+    Return a lower bound on the number of bits to encode the errors based on Shannon's source
+    coding theorem:
+    https://en.wikipedia.org/wiki/Shannon%27s_source_coding_theorem#Source_coding_theorem
+
+    Use a Gaussian approximation to the distribution of errors using the root mean squared error.
+
+    :param error: Vector or list of errors (error = estimate - actual)
+    :return: The lower bound number of bits to encode the errors
+    """
+    # round and cast to an integer, reshape as a vector
+    rmse = np.mean(error ** 2) ** (1/2)
+    entropy = max(np.log2(rmse) + 2, 0)
+    bits = int(np.ceil(entropy * len(error)))
+    if not np.isnan(rmse):
+        entropy = max(np.log2(rmse) + 2, 0)
+        bits = int(np.ceil(entropy * len(error)))
+    else:
+        return float('inf')
+    return bits
+
 
 def plot_history(history, output_path='.'):
     keys = [k for k in history.history.keys() if not k.startswith('val_')]
@@ -186,7 +246,7 @@ def loudness_example():
 
     :return: None
     """
-    endpoint = 'loudness'
+    endpoint = 'mfcc'
     output_path = f'music_{endpoint}_linear'
 
     x_train, y_train = get_xy(endpoint, subset='train')
@@ -201,23 +261,45 @@ def loudness_example():
     # create linear model
     model = Sequential([
         Input(129),
-        Dense(1024, activation='tanh'),
-        Dense(256, activation='swish'),
-        Dense(64, activation='swish'),
-        Dense(1, activation='linear'),
+#        Normalization(),
+#        Dense(256, activation='tanh', kernel_regularizer=l2(0.01)),
+#        Dense(32, activation='swish',  kernel_regularizer=l2(0.01)),
 
+        # Dense(32, 'swish', kernel_regularizer=l2(0.01)),
+#        Dropout(0.2),
+        #Dense(128, activation='selu', kernel_regularizer=l2(0.01)),
+#        Dense(128, activation='tanh', kernel_regularizer=l2(0.01)),
+#        Dense(64, activation='swish', kernel_regularizer=l2(0.01)),
+#        Dropout(0.2),
+#        Dense(128, activation='swish', kernel_regularizer=l2(0.01)),
+#        Dense(64, activation='tanh', kernel_regularizer=l2(0.01)),
+#        Dropout(0.2),
+#        Dense(24, activation='linear'),
+       # Dense(64, 'tanh'),
+        Normalization(),
+        Dense(4196, 'selu', l2(0.01)),
+        Dense(1024, 'elu', l2(0.01)),
+        Dense(512, 'elu', l2(0.01)),
+        Dense(24, 'linear', l2(0.01))
     ])
 
     model.compile(loss='mse', optimizer='adam')
-    model.summary()
-
-    history = model.fit(x_train, y_train, validation_data=[x_valid, y_valid],
-                        callbacks=[model_checkpoint, early_stopping])
-    model, best_epoch, best_loss = get_best_model(output_path)
+    #model.summary()
+    # early_stopping = EarlyStopping(monitor='val_loss', patience=10, verbose=1)
+   # history = model.fit(x_train, y_train, validation_data=[x_valid, y_valid],
+            #            callbacks=[model_checkpoint, early_stopping])
 
     # plot history
-    plot_history(history=history, output_path=output_path)
+    #plot_history(history=history, output_path=output_path)
     visualize(model, endpoint=endpoint, subset='valid', output_path=output_path)
+    history = model.fit(
+        x_train, y_train,
+        validation_data=(x_valid, y_valid),
+        epochs=30,
+        batch_size=4096,
+        callbacks=[model_checkpoint]
+)
+    model, best_epoch, best_loss = get_best_model(output_path)
 
 
 if __name__ == '__main__':
